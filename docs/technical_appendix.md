@@ -1,42 +1,53 @@
 # Technical appendix
 
-This page keeps implementation/provenance details out of the main challenge presentation while preserving the information needed to audit the real-data → policy → Panda path.
+This appendix keeps exact implementation details out of the main challenge presentation while preserving the information needed to audit the real-data → learned policy → Panda path.
 
-## 1. Real LeArm reference state
+## 1. Source and target embodiments
 
-The physical LeArm has no actuator position encoders. During demonstration collection, `real_robot_data_collection/collect_learm_demonstrations.py` maintains a host-side `ShadowLeArm` reference state synchronized with the firmware's fixed startup reference, geometry, command semantics, and reference-motion logic.
+The physical source arm has five rotary arm joints plus a separate claw. For this task its approximate joint-axis sequence is:
 
-The relevant source-arm model uses:
+```text
+LeArm: Z Y Y Y Z + gripper
+```
+
+The simulated target is a Franka Panda:
+
+```text
+Panda: Z Y Z Y Z Y Z + gripper
+```
+
+No source-to-target joint mapping is used. Transfer is performed through task-centric visual observations and local tool-space motion.
+
+For the rod-in-ring task, roll about the approximately axisymmetric rod is not a primary task variable. The task is dominated by tool-tip position and rod direction, allowing the more redundant Panda to realize source demonstrations without reproducing LeArm joint configurations.
+
+## 2. Real LeArm reference trajectory
+
+The physical LeArm has no actuator position encoders. During demonstration collection, `real_robot_data_collection/collect_learm_demonstrations.py` maintains a host-side `ShadowLeArm` reference state synchronized with the firmware's startup reference, geometry, command semantics, and reference-motion logic.
+
+Key geometry/reference values are:
 
 | Quantity | Value |
 | --- | ---: |
-| Base-to-shoulder vertical offset | 28.9 mm |
-| Upper arm | 104.3 mm |
-| Forearm | 89.0 mm |
-| Wrist-to-tool reference | 177.0 mm |
-| Startup rotary reference | `[0, -60, 70, 70, 0]°` |
+| base-to-shoulder vertical offset | 28.9 mm |
+| upper arm | 104.3 mm |
+| forearm | 89.0 mm |
+| wrist-to-tool reference | 177.0 mm |
+| startup rotary reference | `[0, -60, 70, 70, 0]°` |
 
-The challenge-relevant firmware snapshot is under `learm_firmware/`; the complete platform documentation is maintained in [ROS2vision](https://github.com/fBlurryface/ROS2vision).
+The recorded tool trajectory is therefore a deterministic **firmware-synchronized reference trajectory**, not encoder-measured physical state. For this project, recorded tool poses were also replayed on the Panda and checked against the manipulation performed on the physical LeArm.
 
-The recorded task-space trajectory is therefore a deterministic **reference trajectory**, not encoder-measured physical state. For this project, the task-space reconstruction was additionally checked by replaying recorded poses on Panda and comparing the resulting manipulation motion with the original demonstrations.
+The challenge-relevant firmware snapshot is in `learm_firmware/`; the wider platform is documented in [ROS2vision](https://github.com/fBlurryface/ROS2vision).
 
-## 2. Action/frame semantics
+## 3. Why the visual state looks the way it does
 
-The learned action is not a LeArm joint command. It is a canonical local tool-space translation over 100 ms:
+The task was intentionally instrumented so that important manipulation state remains observable from an eye-in-hand camera.
 
-```text
-+X = tool-left
-+Y = tool-up
-+Z = rod-forward
-```
-
-```text
-[d_left_m, d_up_m, d_forward_m]
-```
-
-The simulated Panda resolves this canonical command with its own 7-DoF controller. Source and target joint allocations are therefore intentionally different.
-
-## 3. Observation contract
+- A rod is fixed to the end effector.
+- Its blue-marked tip projects near a stable visual reference.
+- The target is an upright red ring.
+- Ring-tip relative position provides alignment error.
+- Apparent ring size provides a proximity cue.
+- Persistent blue-tip disappearance provides an insertion event.
 
 The policy input is exactly:
 
@@ -48,11 +59,122 @@ ring_minor_ratio
 ring_axis_ratio
 ```
 
-The first two values are red-ring center error relative to the measured blue rod-tip marker. The remaining values describe normalized apparent ring geometry.
+For image width `W`, height `H`, red-ring center `(u_r, v_r)`, blue-tip center `(u_b, v_b)`, current ring axes `(major, minor)`, and the first valid episode axes `(major_0, minor_0)`:
 
-The exported `.npz` stores feature names, action names, normalization statistics, MLP parameters, and the 0.1 s policy horizon.
+\[
+e_u = \frac{u_r-u_b}{W/2}
+\]
 
-## 4. Real-data → checkpoint provenance
+\[
+e_v = \frac{v_r-v_b}{H/2}
+\]
+
+\[
+r_{major}=\frac{major}{major_0},\qquad
+r_{minor}=\frac{minor}{minor_0}
+\]
+
+\[
+\rho=\frac{minor}{major}
+\]
+
+The continuous MLP observation is therefore:
+
+\[
+o_t=[e_u,e_v,r_{major},r_{minor},\rho]
+\]
+
+Blue visibility is also used outside the MLP as the phase-transition signal.
+
+## 4. Action-label construction
+
+The learned target is not the source teleoperation input (`L / Z / P / F`) and not a source joint command.
+
+For a recorded tool pose `T_t`, labels use a five-sample horizon at approximately 50 Hz:
+
+\[
+\Delta T_t=T_t^{-1}T_{t+5}
+\]
+
+so the nominal prediction horizon is approximately:
+
+\[
+5\times20\text{ ms}\approx100\text{ ms}
+\]
+
+The translational component is expressed in the canonical local tool frame:
+
+```text
++X = tool-left
++Y = tool-up
++Z = rod-forward
+```
+
+The human-readable target is:
+
+\[
+y_t=[\Delta L,\Delta U,\Delta F]
+\]
+
+with values naturally interpreted as **mm / 100 ms**. The exported model stores the numerical action in meters (`d_left_m`, `d_up_m`, `d_forward_m`) and `policy_dt_s = 0.1`; deployment divides by 0.1 s to obtain the commanded task-space velocity.
+
+This action representation is independent of LeArm joint allocation and can be consumed directly by the Panda task-space controller.
+
+## 5. Training data selection
+
+The structured dataset contains all 24 collected episodes:
+
+```text
+16 success
+8 failure
+```
+
+The canonical trainer selects success episodes internally. A sample is used only when the entire 100 ms label horizon remains in the measured pre-insertion phase:
+
+- `target_measured == 1` for every sample in the horizon;
+- `blue_measured == 1` for every sample in the horizon;
+- `pierced == 0` throughout the horizon.
+
+The current dataset yields 8,252 valid pre-insertion samples.
+
+The recorder stores substantially more information than the final 5D policy needs, including tool reference pose, red-ring measurements, blue-tip measurements, phase state and timing. The policy representation was selected after collection rather than restricting the raw structured record to the final five features.
+
+## 6. Model and training
+
+The deployed network is:
+
+```text
+5 → 64 → 64 → 32 → 3
+    ReLU  ReLU  ReLU
+```
+
+Training uses:
+
+- observation/action normalization;
+- horizontal mirror augmentation (`e_u` and `ΔL` change sign);
+- SmoothL1 loss (`beta = 0.5`);
+- larger loss weights for more active motion samples;
+- grouped cross-validation by complete episode.
+
+The model export contains network weights, normalization statistics, feature/action names and the 0.1 s policy horizon.
+
+## 7. Hybrid phase boundary
+
+During the learned phase, the blue marker contributes to the relative visual state. After the marker has first been reliably visible, continuous loss of the **actual measured marker** for 0.25 s is treated as the insertion event.
+
+```text
+learned pre-insertion policy
+        ↓
+persistent blue-tip loss
+        ↓
+deterministic upward translation + pitch
+```
+
+This is an engineered visual phase signal, not a contact sensor.
+
+The post-insertion stage was initially explored as a learned behavior but did not transfer reliably. The physical ring was made from high-friction plasticine and tended to remain on the rod despite inconsistent human lift motions. In simulation the ring can slide, creating both a dynamics mismatch and a different post-insertion observation distribution. The final system therefore learns the geometry-dominated stage and scripts the contact-dynamics-sensitive terminal stage.
+
+## 8. Data → checkpoint → runtime provenance
 
 ```text
 real_robot_dataset/learm_demonstrations_structured.zip
@@ -64,7 +186,7 @@ trained_policy/blue_relative_pre_insertion_policy.npz
 run/run_panda_hybrid_ring_pick.py
 ```
 
-Current bundled artifact SHA256 values:
+Bundled artifact SHA256 values:
 
 ```text
 dataset:
@@ -77,14 +199,4 @@ bundled simulation-validated policy:
 5eddf8684168f66ae5fa4b5e5515c45e795267b0adbb2fdb177a4665997bd3c2
 ```
 
-The structured dataset contains all 24 collected episodes. The trainer performs success filtering and valid pre-insertion-window selection internally.
-
-Running the trainer writes directly to the same checkpoint path consumed by simulation.
-
-Fixed random seeds make data construction and evaluation repeatable, but bitwise-identical trained weights are not claimed across arbitrary PyTorch/CPU numerical environments.
-
-## 5. Hybrid boundary
-
-The MLP controls the pre-insertion phase. Persistent loss of the **actual measured** blue marker for 0.25 s is used as the insertion event. Once triggered, the runtime switches to a deterministic upward translation plus mild pitch primitive.
-
-The event is an engineered visual phase signal, not a contact sensor.
+Running the trainer writes directly to the checkpoint path consumed by simulation. Fixed random seeds make data construction and evaluation repeatable, but bitwise-identical learned weights are not claimed across arbitrary PyTorch/CPU numerical environments.

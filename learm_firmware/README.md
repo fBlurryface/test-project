@@ -1,17 +1,17 @@
 # LeArm firmware snapshot
 
-This directory contains the challenge-relevant ESP32 firmware source used during real demonstration collection.
+This directory contains the ESP32 firmware subset relevant to the real demonstration-collection path used in this challenge submission.
 
-The broader LeArm platform, complete ESP-IDF project, hardware documentation, calibration notes, and ROS 2 work live in my separate repository:
+The wider LeArm project, full platform documentation, calibration notes and ROS 2 work are maintained separately in:
 
 **https://github.com/fBlurryface/ROS2vision**
 
-Useful references there:
+Useful references:
 
-- [LeArm hardware / geometry / calibration](https://github.com/fBlurryface/ROS2vision/blob/main/docs/hardware.md#arm-hardware-and-calibration)
+- [LeArm hardware, geometry and calibration](https://github.com/fBlurryface/ROS2vision/blob/main/docs/hardware.md#arm-hardware-and-calibration)
 - [ESP32 arm architecture](https://github.com/fBlurryface/ROS2vision/blob/main/docs/architecture.md#esp32-arm-controller)
-- [ESP32 command and state semantics](https://github.com/fBlurryface/ROS2vision/blob/main/docs/interfaces.md#esp32-arm-serial-protocol)
+- [ESP32 command/state semantics](https://github.com/fBlurryface/ROS2vision/blob/main/docs/interfaces.md#esp32-arm-serial-protocol)
 
-This local snapshot is included only so the challenge data path is auditable. It contains the application entry point plus the motion, kinematics, joint-calibration, and PWM components used by the collector's host-side reference-state reconstruction.
+This local snapshot is included so the demonstration-state reconstruction can be audited without cloning the larger project. The physical LeArm has no actuator position encoders; the collector therefore records a deterministic firmware-synchronized **reference trajectory**, not encoder-measured joint state.
 
-The physical LeArm has no actuator position feedback. The collector therefore records a deterministic firmware-synchronized **reference trajectory**, not encoder-measured joint state. The exact correspondence is summarized in [`../docs/technical_appendix.md`](../docs/technical_appendix.md).
+The exact firmware/shadow relationship is summarized in [`../docs/technical_appendix.md`](../docs/technical_appendix.md).

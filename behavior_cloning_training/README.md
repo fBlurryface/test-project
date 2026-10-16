@@ -1,6 +1,6 @@
 # Behavior-cloning training
 
-This directory contains the **single canonical trainer** for the deployed pre-insertion policy:
+This directory contains the single canonical trainer for the deployed pre-insertion policy:
 
 ```text
 train_blue_relative_pre_insertion_policy.py
@@ -12,31 +12,30 @@ train_blue_relative_pre_insertion_policy.py
 real_robot_dataset/learm_demonstrations_structured.zip
 ```
 
-The script reads all 24 episodes, selects successful demonstrations internally, and retains a 100 ms training window only when the complete horizon has:
+The trainer reads all 24 structured real-robot episodes, selects successful demonstrations internally, and retains only 100 ms windows that remain fully measured and pre-insertion.
 
-- a real red-ring measurement,
-- a real blue-tip measurement,
-- `pierced == 0`.
-
-The current dataset yields **8,252 valid samples from 16 successful demonstrations**.
-
-## Observation → action
+Current dataset:
 
 ```text
-5D observation
-[ring_blue_du_norm,
- ring_blue_dv_norm,
- ring_major_ratio,
- ring_minor_ratio,
- ring_axis_ratio]
-        ↓
-MLP: 5 → 64 → 64 → 32 → 3
-        ↓
-100 ms tool-local displacement
-[d_left_m, d_up_m, d_forward_m]
+16 successful demonstrations
+8,252 valid pre-insertion samples
 ```
 
-Training uses observation/action normalization, horizontal mirror augmentation, SmoothL1 loss, and action-magnitude weighting.
+## Model contract
+
+```text
+5D visual observation
+    ↓
+MLP: 5 → 64 → 64 → 32 → 3
+    ↓
+[Δleft, Δup, Δforward] over ~100 ms
+```
+
+The action labels come from the recorded tool reference trajectory, not from LeArm teleoperation commands. Human-readable values are naturally interpreted in **mm / 100 ms**; the exported checkpoint stores meters plus `policy_dt_s = 0.1`.
+
+Training uses normalization, horizontal mirror augmentation, SmoothL1 loss, and action-magnitude weighting.
+
+Exact feature equations and label construction are documented in [`../docs/technical_appendix.md`](../docs/technical_appendix.md).
 
 ## Run
 
@@ -50,9 +49,9 @@ Output:
 trained_policy/blue_relative_pre_insertion_policy.npz
 ```
 
-The Panda runtime reads that exact path, so retraining automatically replaces the policy used by simulation.
+The Panda runtime reads this exact path, so retraining directly replaces the policy used in simulation.
 
-To check the exported model contract:
+Optional interface check:
 
 ```bash
 python evaluation/check_policy_interface.py
