@@ -1,0 +1,7 @@
+numpy>=1.26
+opencv-python>=4.9
+torch>=2.0
+mujoco>=3.3
+mujoco-menagerie==2026.9.0
+pygame>=2.5
+pyserial>=3.5

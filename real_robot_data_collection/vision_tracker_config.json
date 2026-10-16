@@ -1,0 +1,22 @@
+{
+  "camera_index": 1,
+  "close_kernel": 11,
+  "fps": 60,
+  "h_high_start": 173,
+  "h_low_end": 7,
+  "height": 720,
+  "hole_center_gate": 0.4,
+  "min_axis_ratio": 0.1,
+  "min_hole_area": 120,
+  "min_piece_area": 180,
+  "min_total_area": 1000,
+  "open_kernel": 11,
+  "position_alpha": 0.72,
+  "predict_hold_s": 0.6,
+  "roi_scale": 1.8,
+  "s_min": 160,
+  "use_hole_refine": 1,
+  "v_min": 90,
+  "velocity_alpha": 0.2,
+  "width": 1280
+}

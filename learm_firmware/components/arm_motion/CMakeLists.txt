@@ -1,0 +1,10 @@
+idf_component_register(
+    SRCS
+        "arm_motion.cpp"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        arm_joint
+        log
+        esp_timer
+)
