@@ -78,13 +78,8 @@ ring_axis_ratio
 
 ### Action: 3 tool-space quantities
 
-The network predicts:
+The network predicts $[\Delta L, \Delta U, \Delta F]$, corresponding to **left, up, and forward motion in the tool frame over the next ~100 ms**.
 
-\[
-[\Delta L,\Delta U,\Delta F]
-\]
-
-corresponding to **left, up, and forward motion in the tool frame over the next ~100 ms**.
 
 The supervision targets are **not** the LeArm teleoperation commands. They are derived from the recorded tool trajectory over a 5-step horizon (~100 ms), then expressed in the canonical local tool frame. This is what makes the learned action meaningful to both LeArm and Panda.
 

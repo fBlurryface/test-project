@@ -59,30 +59,23 @@ ring_minor_ratio
 ring_axis_ratio
 ```
 
-For image width `W`, height `H`, red-ring center `(u_r, v_r)`, blue-tip center `(u_b, v_b)`, current ring axes `(major, minor)`, and the first valid episode axes `(major_0, minor_0)`:
+For image width $W$, height $H$, red-ring center $(u_r, v_r)$, blue-tip center $(u_b, v_b)$, current ring axes $(\mathrm{major}, \mathrm{minor})$, and the first valid episode axes $(\mathrm{major}_0, \mathrm{minor}_0)$:
 
-\[
-e_u = \frac{u_r-u_b}{W/2}
-\]
+$$
+\begin{aligned}
+e_u &= \frac{u_r-u_b}{W/2}, &
+e_v &= \frac{v_r-v_b}{H/2}, \\
+r_{\mathrm{major}} &= \frac{\mathrm{major}}{\mathrm{major}_0}, &
+r_{\mathrm{minor}} &= \frac{\mathrm{minor}}{\mathrm{minor}_0}, \\
+\rho &= \frac{\mathrm{minor}}{\mathrm{major}}.
+\end{aligned}
+$$
 
-\[
-e_v = \frac{v_r-v_b}{H/2}
-\]
+The continuous MLP observation is therefore
 
-\[
-r_{major}=\frac{major}{major_0},\qquad
-r_{minor}=\frac{minor}{minor_0}
-\]
-
-\[
-\rho=\frac{minor}{major}
-\]
-
-The continuous MLP observation is therefore:
-
-\[
-o_t=[e_u,e_v,r_{major},r_{minor},\rho]
-\]
+$$
+o_t = [e_u, e_v, r_{\mathrm{major}}, r_{\mathrm{minor}}, \rho].
+$$
 
 Blue visibility is also used outside the MLP as the phase-transition signal.
 
@@ -90,17 +83,13 @@ Blue visibility is also used outside the MLP as the phase-transition signal.
 
 The learned target is not the source teleoperation input (`L / Z / P / F`) and not a source joint command.
 
-For a recorded tool pose `T_t`, labels use a five-sample horizon at approximately 50 Hz:
+For a recorded tool pose $T_t$, labels use a five-sample horizon at approximately 50 Hz:
 
-\[
-\Delta T_t=T_t^{-1}T_{t+5}
-\]
-
-so the nominal prediction horizon is approximately:
-
-\[
-5\times20\text{ ms}\approx100\text{ ms}
-\]
+$$
+\Delta T_t = T_t^{-1}T_{t+5},
+\qquad
+5 \times 20\,\mathrm{ms} \approx 100\,\mathrm{ms}.
+$$
 
 The translational component is expressed in the canonical local tool frame:
 
@@ -112,9 +101,9 @@ The translational component is expressed in the canonical local tool frame:
 
 The human-readable target is:
 
-\[
-y_t=[\Delta L,\Delta U,\Delta F]
-\]
+$$
+y_t = [\Delta L, \Delta U, \Delta F]
+$$
 
 with values naturally interpreted as **mm / 100 ms**. The exported model stores the numerical action in meters (`d_left_m`, `d_up_m`, `d_forward_m`) and `policy_dt_s = 0.1`; deployment divides by 0.1 s to obtain the commanded task-space velocity.
 
@@ -151,7 +140,7 @@ The deployed network is:
 Training uses:
 
 - observation/action normalization;
-- horizontal mirror augmentation (`e_u` and `ΔL` change sign);
+- horizontal mirror augmentation ($e_u$ and $\Delta L$ change sign);
 - SmoothL1 loss (`beta = 0.5`);
 - larger loss weights for more active motion samples;
 - grouped cross-validation by complete episode.
