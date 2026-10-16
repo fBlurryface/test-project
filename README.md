@@ -1,208 +1,216 @@
-<h1 align="center">Real LeArm → Panda Visual Imitation</h1>
+<h1 align="center">Real-Data Cross-Embodiment Manipulation: LeArm → Panda</h1>
 
 <p align="center">
-  Cross-embodiment robot learning from personally collected physical LeArm demonstrations to a simulated Franka Panda.
+  Humanoid Robot Learning Research challenge submission: a compact visuomotor policy trained from my own physical LeArm demonstrations and deployed on a simulated Franka Panda.
 </p>
 
-This repository is the challenge-specific pipeline used to collect real manipulation demonstrations, train a compact behavior-cloning policy, and deploy that policy on a different robot embodiment in MuJoCo.
+> **Final-media slot:** before submission, place a short side-by-side real-LeArm / Panda-success GIF or video here. The repository already contains structured real-robot data and example rollout logs; no media is fabricated in this README.
 
-The task is deliberately simple to describe but sensitive to perception and tool geometry: an eye-in-hand camera observes a red ring and a blue marker at the end of a rod; the robot must align the rod with the ring, insert it through the opening, and then lift the ring.
+## TL;DR
 
-The final system is **hybrid**:
+I collected **24 manipulation demonstrations on a real LeArm** using an eye-in-hand camera and a rod with a blue terminal marker. The task is to align the rod with a red ring, insert it through the opening, and lift the ring.
 
-| Phase | Controller | Learned from real data? |
-| --- | --- | --- |
-| Alignment + approach + insertion | 5D visual observation → small MLP → tool-local translation | **Yes** |
-| Insertion event | sustained loss of the blue terminal marker | No — deterministic event logic |
-| Lift | upward translation + mild pitch motion | No — deterministic terminal primitive |
+Rather than retargeting LeArm joint trajectories to Panda joints, I train a small behavior-cloning policy in a **task-centric space**:
 
-The learned component therefore handles the visually coupled part of the task; the simple post-insertion motion is intentionally scripted rather than represented as an end-to-end learned policy.
+- observation: 5 compact visual features describing the red ring relative to the blue tool tip;
+- action: 3D tool-local translation over the next 100 ms;
+- network: `5 → 64 → 64 → 32 → 3` MLP;
+- source data: my own real LeArm demonstrations;
+- target embodiment: simulated 7-DoF Franka Panda.
+
+The final controller is intentionally hybrid: the learned policy handles the visually coupled **alignment / approach / insertion** phase; after persistent blue-tip disappearance indicates insertion, a deterministic **lift + mild pitch** primitive completes the task.
+
+This directly satisfies the challenge constraint that personally collected real data must play a role in driving a simulated manipulator, while keeping the implementation small and inspectable.
 
 ---
 
-## System overview
+## 1. Challenge idea
+
+The main question I wanted to test was:
+
+> **Can a policy learned from a low-cost real robot transfer to a different robot embodiment if both robots share the same task-centric visual state and tool-space action representation?**
+
+The source and target robots are deliberately different:
+
+| | Real source robot | Simulation target |
+| --- | --- | --- |
+| Robot | LeArm | Franka Panda |
+| Rotary arm DoF | 5 | 7 |
+| Observation | eye-in-hand red ring + blue tool tip | equivalent simulated camera observation |
+| Learned action | tool-local translation | same tool-local translation |
+| Joint mapping | not used | not used |
+
+The transfer therefore happens through **visual/task-space invariants**, not through source joint angles.
 
 ```mermaid
 flowchart LR
-    A["Physical LeArm\neye-in-hand camera"] --> B["24 real demonstrations\nstructured trajectories"]
-    B --> C["Behavior cloning\n5D observation → 3D tool motion"]
-    C --> D["Pre-insertion MLP\n5 → 64 → 64 → 32 → 3"]
-    D --> E["Simulated Panda\nalign / approach / insert"]
-    E -->|"blue marker absent for 0.25 s"| F["Deterministic lift\nup + mild pitch"]
+    A["Real LeArm demonstrations"] --> B["Structured visual + tool-space trajectories"]
+    B --> C["5D blue-relative observation"]
+    C --> D["Small BC MLP"]
+    D --> E["3D tool-local motion"]
+    E --> F["7-DoF Panda simulation"]
+    F -->|"blue tip absent for 0.25 s"| G["deterministic lift"]
 ```
-
-The transfer is performed in **task space**, not by copying LeArm joint motion onto Panda. The learned action is a local Cartesian displacement over 100 ms:
-
-```text
-[d_left, d_up, d_forward]
-```
-
-Panda resolves that command with its own 7-DoF controller. No LeArm or Panda joint angles are inputs to the learned policy.
 
 ---
 
-## Source robot: LeArm and ROS2vision
+## 2. Personally collected real data
 
-The physical source robot is a LeArm controlled by an ESP32. The broader LeArm platform, complete ESP-IDF project, hardware notes, calibration records, and ROS 2 work are maintained in the separate **[ROS2vision](https://github.com/fBlurryface/ROS2vision)** repository.
-
-ROS2vision documents the arm controller as five rotary joints plus an independent claw, with USB-serial command access, position/streaming-velocity reference control, and resolved-rate kinematics. It also explicitly records that the arm has **no actuator position feedback**: reported joint/FK state is a software reference rather than an encoder measurement.
-
-Useful platform references:
-
-- [ROS2vision overview](https://github.com/fBlurryface/ROS2vision)
-- [LeArm hardware, calibration, geometry and startup pose](https://github.com/fBlurryface/ROS2vision/blob/main/docs/hardware.md#arm-hardware-and-calibration)
-- [ESP32 arm architecture and controller boundaries](https://github.com/fBlurryface/ROS2vision/blob/main/docs/architecture.md#esp32-arm-controller)
-- [ESP32 arm commands and state semantics](https://github.com/fBlurryface/ROS2vision/blob/main/docs/interfaces.md#esp32-arm-serial-protocol)
-
-This challenge repository does **not** require the ROS 2 arm integration planned in ROS2vision. Demonstration collection uses the existing ESP32 USB-serial control path directly. A compact snapshot of the challenge-relevant firmware is included under [`learm_firmware/`](learm_firmware/).
-
-### Reference-state reconstruction
-
-Because the physical arm has no joint encoders, [`collect_learm_demonstrations.py`](real_robot_data_collection/collect_learm_demonstrations.py) maintains a host-side `ShadowLeArm` reference state synchronized with the same startup pose, geometry, command semantics, motion limits, and reference-motion logic used by the firmware.
-
-The relevant source-robot model is:
-
-| Quantity | Value |
-| --- | ---: |
-| Base-to-shoulder vertical offset | 28.9 mm |
-| Upper arm | 104.3 mm |
-| Forearm | 89.0 mm |
-| Wrist-to-tool reference point | 177.0 mm |
-| Startup rotary reference | `[0, -60, 70, 70, 0]°` |
-
-The recorded task-space trajectory is therefore a **deterministically reconstructed reference trajectory**, not encoder-measured state. For this project, those task-space trajectories were additionally checked by replaying them on Panda and comparing the resulting manipulation motion with the original physical demonstrations. See [`docs/firmware_shadow_model_mapping.md`](docs/firmware_shadow_model_mapping.md).
-
----
-
-## Real-robot data
-
-The repository includes the complete structured logs for all **24 physical demonstrations**:
+The repository includes the complete structured logs for **24 physical LeArm episodes**:
 
 ```text
-24 episodes
+24 demonstrations
 ├── 16 success
 └── 8 failure
 ```
 
-Dataset:
+Archive:
 
 ```text
 real_robot_dataset/learm_demonstrations_structured.zip
 ```
 
-Each episode records the robot reference trajectory, task-space tool pose, red-ring measurements, blue-tip measurements, timing information, and phase/event fields produced during collection.
+The original capture also contains raw eye-in-hand video (about **3.27 GB**), which is omitted from this repository because the current policy trains from the synchronized structured logs. The archive contains the task-space reference trajectory, red-ring measurements, blue-tip measurements, timing information, and success/failure metadata.
 
-The full raw eye-in-hand video archive is approximately **3.27 GB** and is intentionally not bundled because the current policy trains directly from the structured logs. See [`real_robot_dataset/README.md`](real_robot_dataset/README.md).
+The data collector and tracker used on the real robot are included under [`real_robot_data_collection/`](real_robot_data_collection/).
 
-### Compact visual observation
-
-The learned policy uses only five task-centric visual features:
-
-| Feature | Meaning |
-| --- | --- |
-| `ring_blue_du_norm` | horizontal ring-center displacement relative to the measured blue tip |
-| `ring_blue_dv_norm` | vertical ring-center displacement relative to the measured blue tip |
-| `ring_major_ratio` | current ring major axis / first valid major axis |
-| `ring_minor_ratio` | current ring minor axis / first valid minor axis |
-| `ring_axis_ratio` | ring minor axis / major axis |
-
-The key representation choice is that image error is measured **relative to the blue terminal marker**, not relative to the image center.
+The physical LeArm platform and its wider hardware/firmware documentation are maintained in my separate [`ROS2vision`](https://github.com/fBlurryface/ROS2vision) repository. This challenge repo includes only the firmware subset needed to audit the data-collection path.
 
 ---
 
-## Behavior-cloning policy
+## 3. What the model learns
 
-Canonical trainer:
+### Observation
+
+The deployed model uses five visual features:
 
 ```text
-behavior_cloning_training/train_blue_relative_pre_insertion_policy.py
+ring_blue_du_norm
+ring_blue_dv_norm
+ring_major_ratio
+ring_minor_ratio
+ring_axis_ratio
 ```
 
-The trainer reads the complete 24-episode archive and performs all filtering internally. Only successful demonstrations are used for the deployed policy, and a 100 ms training window is retained only when the complete horizon has:
+The important design choice is that the ring position is measured **relative to the detected blue rod tip**, rather than relative to the image center.
 
-- a real red-ring measurement,
-- a real blue-tip measurement,
-- `pierced == 0`.
+This makes the state representation task-centric: the policy sees where the hole is relative to the tool and how the projected ring geometry changes with approach.
 
-This produces **8,252 valid pre-insertion samples** from the 16 successful episodes.
+### Action
 
-### Action target
-
-For each valid time step, the target is the observed tool-local translation over the next 100 ms:
+The training target is the tool-local translation observed over the next 100 ms:
 
 ```text
 [d_left_m, d_up_m, d_forward_m]
 ```
 
-The target comes from successive reconstructed task-space poses, not from the source robot's joint commands or teleoperation inputs.
+No LeArm joint angles or teleoperation commands are used as policy targets.
 
-### Network and optimization
+The Panda receives the same canonical tool-space action and resolves it with its own 7-DoF controller.
+
+### Model
 
 ```text
 5 → 64 → 64 → 32 → 3
     ReLU  ReLU  ReLU
 ```
 
-Training uses:
+The canonical trainer reads the full 24-episode archive, selects successful demonstrations internally, and keeps only pre-insertion windows with real red-ring and blue-tip measurements over the full 100 ms prediction horizon.
 
-- observation/action normalization stored inside the exported `.npz`,
-- SmoothL1 loss,
-- larger loss weight for more active motion samples,
-- horizontal mirror augmentation,
-- episode-grouped validation.
+That produces **8,252 training samples** from the 16 successful demonstrations.
 
-The bundled training report records a mean grouped validation vector RMSE of approximately **3.87 mm per 100 ms**. These folds are used for training-time model selection and should be interpreted as grouped held-out validation rather than a separately untouched final test set.
-
-More detail is in [`behavior_cloning_training/README.md`](behavior_cloning_training/README.md) and [`results/training_metrics.json`](results/training_metrics.json).
+Training uses normalization, horizontal mirror augmentation, SmoothL1 loss, and larger sample weights for more active motions.
 
 ---
 
-## Panda deployment
+## 4. Why the final policy is hybrid
 
-The exported policy is:
+The learned component is used where the task is genuinely visually coupled:
 
 ```text
-trained_policy/blue_relative_pre_insertion_policy.npz
+align → approach → insert
 ```
 
-The artifact contains:
+After insertion, the required behavior is much simpler. The controller therefore switches on a persistent visual event:
 
-- MLP weights and biases,
-- observation mean/std,
-- action mean/std,
-- feature names,
-- action names,
-- 100 ms policy horizon metadata.
+```text
+blue tip not measured continuously for 0.25 s
+                ↓
+         insertion event
+                ↓
+       scripted upward lift
+       + mild pitch motion
+```
 
-At runtime, the MLP controls only translation in the canonical tool frame. The Panda controller converts that task-space command to its own 7-DoF joint motion. Deployment also applies task-speed clipping and an out-of-distribution hold around the learned policy.
-
-When the blue marker has been continuously unmeasured for **0.25 s**, control switches to the terminal primitive. The default full-task runtime then commands approximately:
-
-- `+80 mm/s` upward translation,
-- `-8 deg/s` pitch rate,
-- for `1.5 s`, followed by a short settle period.
-
-The final hybrid entry point is [`run/run_panda_hybrid_ring_pick.py`](run/run_panda_hybrid_ring_pick.py).
+This split is deliberate. I did not keep a learned post-insertion stage simply to make the system "more ML"; the deterministic primitive is easier to inspect and is sufficient for the terminal motion.
 
 ---
 
-## Quick start
+## 5. Results
 
-Python 3.10+ is recommended.
+### Training-time evaluation
 
-### 1. Install dependencies
+The bundled training report gives grouped held-out validation performance of:
+
+| Metric | Result |
+| --- | ---: |
+| Mean 3D displacement RMSE | **3.87 mm / 100 ms** |
+| Left active-direction accuracy | **92.2%** |
+| Up active-direction accuracy | **84.6%** |
+| Forward active-direction accuracy | **97.0%** |
+
+These folds are used during model development/model selection, so I treat them as **grouped held-out validation**, not as a pristine final test set.
+
+### Example simulation rollouts
+
+The repository currently includes four hybrid rollout logs in [`results/validated_hybrid_rollouts/`](results/validated_hybrid_rollouts/):
+
+- three reach the post-insertion `SETTLE` state with `phase_pierced=1` and approximately **75–78 mm** of ring lift;
+- one randomized-start rollout fails before the insertion transition and remains in `RED_LOST_HOLD`.
+
+This small set is included as an inspectable example, not as a statistically meaningful benchmark. A final submission should pair these logs with a short visual demo and, ideally, an aggregate N-trial success rate.
+
+See [`results/README.md`](results/README.md) for the current artifacts.
+
+---
+
+## 6. What worked / what did not
+
+### What worked
+
+**Task-space transfer instead of joint retargeting.**  The LeArm and Panda have different kinematic structures, but the policy output is embodiment-independent enough for Panda to execute with its own controller.
+
+**Blue-relative visual state.**  Expressing ring location relative to the actual tool-tip marker gave the policy a direct perception-action relationship instead of asking it to infer the tool location from a fixed image reference.
+
+**Learning only the difficult phase.**  The learned policy is responsible for alignment, approach, and insertion; the simple post-insertion motion is handled deterministically. This kept the policy small and the failure modes understandable.
+
+**Using the real trajectory as task-space supervision.**  The source arm has no joint encoders, but the firmware and host collector share the same reference-motion model. I additionally checked the reconstructed task-space motion by replaying recorded poses on Panda.
+
+### What did not / remaining failure modes
+
+**A hand-designed visual servo alone was not a satisfying challenge solution.**  It was a useful baseline and could perform insertion well, but it did not demonstrate direct learned use of the collected demonstrations. The final system therefore keeps the learned pre-insertion controller as the main policy component.
+
+**A fully learned terminal phase was unnecessary.**  Once insertion is detected, the remaining lift is structurally simple; keeping a learned controller there added complexity without a clear benefit for this submission.
+
+**Randomized starts can still leave the learned observation distribution.**  The bundled failed rollout shows a case where the red target is lost before the insertion transition. The runtime includes clipping/OOD hold logic, but broader randomized training data would be the next step for robustness.
+
+---
+
+## 7. Reproduce the pipeline
+
+Install dependencies:
 
 ```bash
 python -m pip install -r requirements.txt
 ```
 
-### 2. Check the bundled policy interface
+### Check the bundled policy
 
 ```bash
 python evaluation/check_policy_interface.py
 ```
 
-### 3. Retrain from the bundled real dataset
+### Train a fresh policy from the real dataset
 
 ```bash
 python behavior_cloning_training/train_blue_relative_pre_insertion_policy.py
@@ -220,98 +228,61 @@ and writes directly to:
 trained_policy/blue_relative_pre_insertion_policy.npz
 ```
 
-The simulation uses that same path by default, so no manual checkpoint copy is required.
+The simulation uses that same path, so no manual checkpoint copy is needed.
 
-Run the contract check again after retraining:
-
-```bash
-python evaluation/check_policy_interface.py
-```
-
-### 4. Smoke-test the Panda simulation
+### Smoke-test the Panda simulation
 
 ```bash
 python evaluation/smoke_test_panda_simulation.py
 ```
 
-### 5. Run only the learned phase
+### Run only the learned pre-insertion policy
 
 ```bash
 python run/run_learned_pre_insertion_policy.py --preset baseline
 ```
 
-Randomized ring placement:
-
-```bash
-python run/run_learned_pre_insertion_policy.py --preset random --seed 1
-```
-
-### 6. Run the complete hybrid task
+### Run the complete hybrid task
 
 ```bash
 python run/run_panda_hybrid_ring_pick.py --preset baseline
 ```
 
-### 7. Replay a real LeArm trajectory on Panda
+### Replay a recorded real LeArm trajectory on Panda
 
 ```bash
 python run/replay_real_learm_trajectory_on_panda.py \
-    --episode episode_000001 \
-    --mode pose
-```
-
-### Clean retraining check
-
-To verify the complete data → model → Panda path without relying on the bundled reference policy:
-
-```text
-1. delete trained_policy/blue_relative_pre_insertion_policy.npz
-2. run the canonical trainer
-3. confirm the policy file is recreated
-4. run evaluation/check_policy_interface.py
-5. run the Panda policy
+  --episode episode_000001 \
+  --mode pose
 ```
 
 ---
 
-## Repository layout
+## 8. Repository layout
 
 ```text
-learm-to-panda-visual-imitation/
-├── learm_firmware/                 challenge-relevant LeArm firmware snapshot
-├── real_robot_data_collection/     physical teleoperation, perception and recording
-├── real_robot_dataset/             complete 24-episode structured dataset
-├── behavior_cloning_training/      single canonical BC trainer
-├── trained_policy/                 deployed pre-insertion policy
-├── panda_simulation/               Panda environment, vision and control modules
-├── run/                            runnable learned/hybrid/replay entry points
-├── evaluation/                     policy-contract and simulation smoke checks
-├── results/                        training metrics and validated rollout logs
-└── docs/                           method, provenance and validation notes
+learm_firmware/                  challenge-relevant source-robot firmware snapshot
+real_robot_data_collection/     real LeArm collection + visual tracking
+real_robot_dataset/             complete structured 24-episode dataset
+behavior_cloning_training/      canonical BC trainer
+trained_policy/                 deployed MLP checkpoint
+panda_simulation/               Panda environment, controller, vision and policy runtime
+run/                            task entry points
+results/                        training metrics and example rollouts
+evaluation/                     lightweight interface/simulation checks
+docs/technical_appendix.md      implementation details and provenance
 ```
 
-The intended provenance chain is deliberately one-to-one:
+The three short module READMEs are intentionally focused on reproduction rather than duplicating the project story:
 
-```text
-real_robot_dataset/learm_demonstrations_structured.zip
-        ↓
-behavior_cloning_training/train_blue_relative_pre_insertion_policy.py
-        ↓
-trained_policy/blue_relative_pre_insertion_policy.npz
-        ↓
-run/run_panda_hybrid_ring_pick.py
-```
+- [`real_robot_dataset/README.md`](real_robot_dataset/README.md)
+- [`behavior_cloning_training/README.md`](behavior_cloning_training/README.md)
+- [`learm_firmware/README.md`](learm_firmware/README.md)
 
 ---
 
-## Reproducibility and scope
+## 9. Important implementation note
 
-- The bundled `.npz` is the reference policy used by the validated simulation build.
-- Running the canonical trainer overwrites that path with the newly trained policy.
-- Fixed seeds make data construction and evaluation repeatable, but bitwise-identical learned weights are **not** claimed across different PyTorch/CPU numerical environments.
-- The structured dataset contains all 24 collected episodes; the raw video archive is omitted only for repository size.
-- LeArm state is reconstructed from the firmware reference model rather than measured by joint encoders.
-- The deployed system is explicitly **hybrid**, not an end-to-end learned full-task policy.
-- The ROS 2 arm integration discussed in ROS2vision is outside the scope of this challenge repository; this project uses the existing ESP32 USB-serial control path for real data collection.
+The physical LeArm has no actuator position encoders. Its recorded tool pose is therefore a **deterministically reconstructed reference state**, synchronized with the same startup pose, geometry, command semantics, and reference-motion logic as the ESP32 firmware; it is not presented as measured ground-truth joint state.
 
-See [`docs/data_and_policy_provenance.md`](docs/data_and_policy_provenance.md) and [`docs/validation_notes.md`](docs/validation_notes.md) for the exact artifact chain and validation boundaries.
+That distinction, the exact real-data → checkpoint chain, coordinate conventions, and artifact hashes are documented in [`docs/technical_appendix.md`](docs/technical_appendix.md).

@@ -1,34 +1,42 @@
 # Behavior-cloning training
 
-This directory contains the single canonical trainer used to produce the deployed pre-insertion policy.
+This directory contains the **single canonical trainer** for the deployed pre-insertion policy:
+
+```text
+train_blue_relative_pre_insertion_policy.py
+```
 
 ## Input
 
-`../real_robot_dataset/learm_demonstrations_structured.zip`
+```text
+real_robot_dataset/learm_demonstrations_structured.zip
+```
 
-The archive contains all 24 structured real-LeArm episodes. The trainer reads episode metadata, selects successful demonstrations internally, and then keeps only 100 ms windows where:
+The script reads all 24 episodes, selects successful demonstrations internally, and retains a 100 ms training window only when the complete horizon has:
 
-- the red ring is actually measured,
-- the blue terminal marker is actually measured,
-- `pierced == 0` throughout the prediction horizon.
+- a real red-ring measurement,
+- a real blue-tip measurement,
+- `pierced == 0`.
 
-## Policy definition
+The current dataset yields **8,252 valid samples from 16 successful demonstrations**.
 
-Observation (5D):
+## Observation → action
 
-1. `ring_blue_du_norm`
-2. `ring_blue_dv_norm`
-3. `ring_major_ratio`
-4. `ring_minor_ratio`
-5. `ring_axis_ratio`
+```text
+5D observation
+[ring_blue_du_norm,
+ ring_blue_dv_norm,
+ ring_major_ratio,
+ ring_minor_ratio,
+ ring_axis_ratio]
+        ↓
+MLP: 5 → 64 → 64 → 32 → 3
+        ↓
+100 ms tool-local displacement
+[d_left_m, d_up_m, d_forward_m]
+```
 
-Target (3D): tool-local displacement over 100 ms:
-
-1. `d_left_m`
-2. `d_up_m`
-3. `d_forward_m`
-
-Network: `5 -> 64 -> 64 -> 32 -> 3`, with ReLU hidden layers.
+Training uses observation/action normalization, horizontal mirror augmentation, SmoothL1 loss, and action-magnitude weighting.
 
 ## Run
 
@@ -36,9 +44,16 @@ Network: `5 -> 64 -> 64 -> 32 -> 3`, with ReLU hidden layers.
 python behavior_cloning_training/train_blue_relative_pre_insertion_policy.py
 ```
 
-Outputs:
+Output:
 
-- `trained_policy/blue_relative_pre_insertion_policy.npz`
-- `results/training_metrics.json`
+```text
+trained_policy/blue_relative_pre_insertion_policy.npz
+```
 
-The trained-policy path is also the default model path used by the Panda runtime.
+The Panda runtime reads that exact path, so retraining automatically replaces the policy used by simulation.
+
+To check the exported model contract:
+
+```bash
+python evaluation/check_policy_interface.py
+```
