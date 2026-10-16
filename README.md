@@ -4,7 +4,14 @@
   Humanoid Robot Learning Research challenge submission using personally collected real-robot demonstrations to drive a kinematically different manipulator in simulation.
 </p>
 
-> **Media slot for final submission:** add a short side-by-side clip of a real LeArm demonstration and the Panda hybrid policy completing the same task.
+<p align="center">
+  <img src="results/media/panda_hybrid_lift_success.gif" alt="Panda hybrid policy successfully lifting the ring" width="720">
+</p>
+
+<p align="center">
+  <strong>Successful final lift in the hybrid policy.</strong><br>
+  <a href="results/media/panda_hybrid_full_rollout.mp4">Watch the full 18 s rollout (MP4, 1.5 MB)</a>
+</p>
 
 ## TL;DR
 
@@ -29,6 +36,12 @@ The source and target manipulators have very different kinematic structures:
 | Gripper | separate actuator | separate actuator |
 
 For the ring-picking task, success depends mainly on the **tool-tip position and rod direction**, not on matching source and target joint angles. Panda's extra redundancy can therefore be used to realize the same task-space behavior with a different joint configuration.
+
+<p align="center">
+  <img src="results/media/real_learm_setup.jpg" alt="Real LeArm setup with eye-in-hand camera and blue-tipped rod" width="47%">
+  <img src="results/media/panda_simulation_setup.png" alt="Simulated Panda with corresponding rod and camera task geometry" width="47%">
+</p>
+<p align="center"><sub>Real source embodiment (left) and simulated target embodiment (right). The joint structures differ, while the task-relevant tool/camera geometry is preserved.</sub></p>
 
 ### Engineer the task for visual observability
 
@@ -108,6 +121,11 @@ The experiments exposed a useful boundary between two parts of the task.
 | post-insertion lift | contact dynamics / friction | did not transfer reliably as BC |
 
 The learned policy worked well for the **geometry-dominated** part of the task: alignment, approach, and insertion.
+
+<p align="center">
+  <img src="results/media/panda_learned_pre_insertion_success.gif" alt="Learned Panda policy aligning, approaching, and inserting the rod through the ring" width="720">
+</p>
+<p align="center"><sub>Learned pre-insertion phase: alignment → approach → insertion.</sub></p>
 
 The learned lift was less reliable for two reasons. First, my real post-insertion demonstrations were not very consistent: the physical ring often tolerated different lift motions. Second, the real ring was made from high-friction plasticine, while the simulated ring can slide along the rod. The same successful real action therefore does not always produce the same result in simulation.
 
@@ -213,7 +231,7 @@ trained_policy/               deployed MLP checkpoint
 panda_simulation/             Panda environment, vision and controller
 run/                          main rollout / replay entry points
 evaluation/                   interface and simulation smoke tests
-results/                      training metrics + example rollout logs
+results/                      metrics + rollout logs + submission media
 learm_firmware/               challenge-relevant ESP32 firmware snapshot
 docs/technical_appendix.md    exact technical definitions and provenance
 ```
