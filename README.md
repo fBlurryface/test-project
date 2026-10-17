@@ -1,6 +1,6 @@
 ﻿# Humanoid Robot Learning Research Challenge
 
-## Final Submission
+## Please use my final submission here:
 
 👉 [LeArm-to-Panda-Visuomotor-Transfer](https://github.com/fBlurryface/LeArm-to-Panda-Visuomotor-Transfer)
 
